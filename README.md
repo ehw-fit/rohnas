@@ -1,22 +1,19 @@
-# NAScaps
-A Framework for Neural Architecture Search to Optimize the Accuracy and Hardware Efficiency of Convolutional Capsule Networks. This repository provides source codes and [the best-found solutions](chroms/README.md) from neural architecture search of convolutional capsule networks. For more detail please follow [our paper](https://arxiv.org/abs/2008.08476). If you used these results in your research, please refer to the paper
+# RoHNAS - neural architecture search for adversial-attack resilient Capsule neural networks
+
+A Neural Architecture Search Framework with Conjoint Optimization for Adversarial Robustness and Hardware Efficiency of Convolutional and Capsule Networks. This repository provides source codes from neural architecture search of convolutional capsule networks with respect to the adversial attack robustness. For more detail please follow [our paper](tbd). If you used these results in your research, please refer to the paper.
 
 
-     MARCHISIO Alberto, MASSA Andrea, MRAZEK Vojtech, BUSSOLINO Beatrice, MARTINA Maurizio and SHAFIQUE Muhammad. NASCaps: A Framework for Neural Architecture Search to Optimize the Accuracy and Hardware Efficiency of Convolutional Capsule Networks. In: IEEE/ACM International Conference on Computer-Aided Design (ICCAD '20). Virtual Event: Institute of Electrical and Electronics Engineers, 2020, p. 9. ISBN 978-1-4503-8026-3. 
+     MARCHISIO Alberto, MRAZEK Vojtech, MASSA Andrea, BUSSOLINO Beatrice, MARTINA Mauricio a SHAFIQUE Muhammad. RoHNAS: A Neural Architecture Search Framework with Conjoint Optimization for Adversarial Robustness and Hardware Efficiency of Convolutional and Capsule Networks. IEEE Access, 2022. ISSN 2169-3536.
+
 
 
 ```bibtex
-@INPROCEEDINGS{nascaps:2020,
-   author = "Alberto Marchisio and Andrea Massa and Vojtech Mrazek and Beatrice Bussolino and Maurizio Martina and Muhammad Shafique",
-   title = "NASCaps: A Framework for Neural Architecture Search to Optimize the Accuracy and Hardware Efficiency of Convolutional Capsule Networks",
-   pages = 9,
-   booktitle = "IEEE/ACM International Conference on Computer-Aided Design (ICCAD '20)",
-   year = 2020,
-   location = "Virtual Event, US",
-   publisher = "Institute of Electrical and Electronics Engineers",
-   ISBN = "978-1-4503-8026-3",
-   doi = "10.1145/3400302.3415731",
-   url = "https://arxiv.org/abs/2008.08476"
+@INPROCEEDINGS{rohnas:2022,
+   author = "Alberto Marchisio and Vojtech Mrazek and Andrea Massa and Beatrice Bussolino and Mauricio Martina and Muhammad Shafique",
+   title = "RoHNAS: A Neural Architecture Search Framework with Conjoint Optimization for Adversarial Robustness and Hardware Efficiency of Convolutional and Capsule Networks",
+   journal = "IEEE Access",
+   year = 2022,
+   ISSN = "2169-3536",
 }
 ```
 
@@ -67,6 +64,7 @@ python main.py --epochs 5 \   # number of epochs
 	--population 10 --offsprings 10 \  #nsga settings
 	--generations 50 \   # 
         --timeout 300 \  # timeout in in seconds for training of one candidate
+	--eps 0.003 0.1 \    # selected epsilon levels
 	--save_dir ${work}/data \  # directory with results
 	--cache_dir ${work}/cache \ # 
 	2>${work}/logs/${dat}.err > ${work}/logs/${dat}.std
@@ -77,6 +75,7 @@ python main.py --epochs 5 \   # number of epochs
 python randlearn.py --epochs 10 \
 	--dataset cifar10 \
 	--output "${work}/rand_short/cifar/${dat}" \
+	--eps 0.003 0.1 \    # selected epsilon levels
 	--max_params 0 \
         --timeout 600 \
 	--save_dir ${work}/data \
@@ -92,6 +91,7 @@ python chrlearn.py --epochs 150 \
 	--output "./logrand/${dat}" \
 	--dataset mnist \
 	--max_params 0 \
+	--eps 0.001 0.03 0.01 \
 	"$fn"                       \
 	2>../logrand/${dat}.err > ../logrand/${dat}.std
 ```

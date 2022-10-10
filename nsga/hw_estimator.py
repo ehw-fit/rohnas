@@ -241,6 +241,9 @@ if __name__ == "__main__":
             e.parse_genotype(json.load(open(fn)))    
 
         print(e)
+        print("chromosome = ", fn)
         print("energy = ", e.get_energy())
         print("latency= ", e.get_latency(), " ns")
         print("memory = ", e.get_memory())
+
+        print(f"___fn= {fn},energy = {e.get_energy()},latency= {e.get_latency()},memory = {e.get_memory()}")

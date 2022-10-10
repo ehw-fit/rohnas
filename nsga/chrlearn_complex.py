@@ -37,7 +37,7 @@ fix_out_b=[]
 cross_out=[]
 
 from main import load_mnist, load_fmnist, load_cifar10, load_cifar100, set_args, set_data, load_svhn
-from main import resize
+from main import resize, wrap_train_test
 
 
 def margin_loss(y_true, y_pred):
@@ -144,73 +144,73 @@ def test(model, data, args):
 
 
 
-def wrap_train_test(gene):
-    global x_train, y_train, x_test, y_test
-    runid = "N/A"
-    print(gene)
+# def wrap_train_test(gene):
+#     global x_train, y_train, x_test, y_test
+#     runid = "N/A"
+#     print(gene)
 
-    print("\nWrapping...\n")
-    strategy = tf.distribute.MirroredStrategy()
-    print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+#     print("\nWrapping...\n")
+#     strategy = tf.distribute.MirroredStrategy()
+#     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
         
 
-    # reshaping of the training data
-    if gene[-1][0]==2: # reshaping is enabled
-        desired_size = gene[0][1]
-        x_train_current = resize(x_train, desired_size)
-        x_test_current = resize(x_test, desired_size)
-    elif gene[-1][0]==1: # no reshaping
-        x_train_current = x_train
-        x_test_current = x_test
-    else:
-        print("#### INVALID GENE - last value is not 1 nor 2", gene[-1][0])
-        return runid, 0
+#     # reshaping of the training data
+#     if gene[-1][0]==2: # reshaping is enabled
+#         desired_size = gene[0][1]
+#         x_train_current = resize(x_train, desired_size)
+#         x_test_current = resize(x_test, desired_size)
+#     elif gene[-1][0]==1: # no reshaping
+#         x_train_current = x_train
+#         x_test_current = x_test
+#     else:
+#         print("#### INVALID GENE - last value is not 1 nor 2", gene[-1][0])
+#         return runid, 0
 
 
-    # define model
-    try:
-        print("x_train shape: "+ str(x_train_current.shape[1:]))
-        model, eval_model, manipulate_model = CapsNet(gene = gene, input_shape=x_train_current.shape[1:],
-                                                  n_class=len(np.unique(np.argmax(y_train, 1))),
-                                                  routings=args.routings)
-    except ValueError as e: # some bug in the chromosome ....
-        print("#### VALUE error desc ", e)
-        print("#### VALUE error gene ", gene)
-        tf.keras.backend.clear_session()
-        K.clear_session()
-        return runid, 0
-    except tf.errors.ResourceExhaustedError as e: # some bug in the chromosome ....
-        print("#### Out of resources error desc ", e)
-        print("#### Out of resources error gene ", gene)
-        tf.keras.backend.clear_session()
-        K.clear_session()
-        return runid, 0
+#     # define model
+#     try:
+#         print("x_train shape: "+ str(x_train_current.shape[1:]))
+#         model, eval_model, manipulate_model = CapsNet(gene = gene, input_shape=x_train_current.shape[1:],
+#                                                   n_class=len(np.unique(np.argmax(y_train, 1))),
+#                                                   routings=args.routings)
+#     except ValueError as e: # some bug in the chromosome ....
+#         print("#### VALUE error desc ", e)
+#         print("#### VALUE error gene ", gene)
+#         tf.keras.backend.clear_session()
+#         K.clear_session()
+#         return runid, 0
+#     except tf.errors.ResourceExhaustedError as e: # some bug in the chromosome ....
+#         print("#### Out of resources error desc ", e)
+#         print("#### Out of resources error gene ", gene)
+#         tf.keras.backend.clear_session()
+#         K.clear_session()
+#         return runid, 0
 
 
-    model.summary()
+#     model.summary()
 
-    # train or test
-    if args.weights is not None:  # init the model weights with provided one
-        model.load_weights(args.weights)
-    if not args.testing:
-        # if gene[len(gene)-1][0]==2:
-        #     x_train = resize(x_train, gene[0][1]) #64
-        #     x_test = resize(x_test, gene[0][1])
-        #     train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
-        # elif gene[len(gene)-1][0]==1:
-        print("Train shapes:", x_train.shape, y_train.shape)
-        runid, _ = train(model=model, data=((x_train_current, y_train), (x_test_current, y_test)), args=args)
-    else:  # as long as weights are given, will run testing
-        if args.weights is None:
-            print('No weights are provided. Will test using random initialized weights.')
-    test_acc = test(model=eval_model, data=(x_test_current, y_test), args=args)
+#     # train or test
+#     if args.weights is not None:  # init the model weights with provided one
+#         model.load_weights(args.weights)
+#     if not args.testing:
+#         # if gene[len(gene)-1][0]==2:
+#         #     x_train = resize(x_train, gene[0][1]) #64
+#         #     x_test = resize(x_test, gene[0][1])
+#         #     train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
+#         # elif gene[len(gene)-1][0]==1:
+#         print("Train shapes:", x_train.shape, y_train.shape)
+#         runid, _ = train(model=model, data=((x_train_current, y_train), (x_test_current, y_test)), args=args)
+#     else:  # as long as weights are given, will run testing
+#         if args.weights is None:
+#             print('No weights are provided. Will test using random initialized weights.')
+#     test_acc = test(model=eval_model, data=(x_test_current, y_test), args=args)
    
-    tf.keras.backend.clear_session()
-    K.clear_session()
-    if False:
-        import os
-        os.system("nvidia-smi")
-    return runid, test_acc
+#     tf.keras.backend.clear_session()
+#     K.clear_session()
+#     if False:
+#         import os
+#         os.system("nvidia-smi")
+#     return runid, test_acc
 
 
 def run_chromosome(chromosome_name, metrics, inshape):
@@ -226,7 +226,7 @@ def run_chromosome(chromosome_name, metrics, inshape):
     chromosome[-3][-2] = inshape[-1]
 
     print("parsing chromosome {0}".format(str(chromosome)))
-    accuracy, _ = wrap_train_test(chromosome)
+    accuracy, _ = wrap_train_test(chromosome, train_function=train)
 
     return accuracy
 
@@ -243,6 +243,9 @@ if __name__ == "__main__":
     parser.add_argument('--output', default="results", type=str)
     parser.add_argument('--timeout', default=0, type=int, help="Maximal time in seconds for the training, zero = not set")
     parser.add_argument('--gpus', default=1, type=int)
+    parser.add_argument('-w', '--weights', default=None,
+                        help="The path of the saved weights. Should be specified when testing")
+    parser.add_argument('--eps', default=[], nargs="+", type=float)
 
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--lr', default=0.001, type=float,
@@ -269,8 +272,6 @@ if __name__ == "__main__":
                         help="Test the trained model on testing dataset")
     parser.add_argument('--digit', default=5, type=int,
                         help="Digit to manipulate")
-    parser.add_argument('-w', '--weights', default=None,
-                        help="The path of the saved weights. Should be specified when testing")
     parser.add_argument('--max_params', default=0, type=int)
                         
     parser.add_argument('chromosome', help="Chromosme")

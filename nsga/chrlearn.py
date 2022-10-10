@@ -72,6 +72,7 @@ if __name__ == "__main__":
     parser.add_argument('--output', default="results", type=str)
     parser.add_argument('--timeout', default=0, type=int, help="Maximal time in seconds for the training, zero = not set")
     parser.add_argument('--gpus', default=1, type=int)
+    parser.add_argument('--eps', default=[], nargs="+", type=float)
 
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--lr', default=0.001, type=float,
@@ -135,7 +136,7 @@ if __name__ == "__main__":
     set_data(x_train, y_train, x_test, y_test)
 
 
-    rets = run_chromosome(arg.chromosome, metrics=["accuracy_drop", "energy", "memory", "latency"], inshape=inshape)
+    rets = run_chromosome(args.chromosome, metrics=["accuracy_drop", "energy", "memory", "latency"], inshape=inshape)
     outfile = f"{args.output}_random.json"
     json.dump(rets, open(outfile, "wt"), )
     #tf.app.run()

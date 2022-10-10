@@ -1,5 +1,7 @@
 # this is a draft of NSGA2 algorith
 import os
+
+from numpy.lib.function_base import append
 #os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import tensorflow as tf 
@@ -28,14 +30,17 @@ from paretoarchive import PyBspTreeArchive
 import uuid
 from timeout_callback import TimeoutCallback
 import sys
+import numpy as np
 sys.path.append("..")
+
+from attacks import PGD_linf
 
 from keras.backend.tensorflow_backend import set_session
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
 #config.log_device_placement = True  # to log device placement (on which device the operation ran)
-sess = tf.Session(config=config)
-set_session(sess)  # set this TensorFlow session as the default session for Keras
+#sess = tf.Session(config=config)
+#set_session(sess)  # set this TensorFlow session as the default session for Keras
 
 
 def set_args(a):
@@ -513,24 +518,32 @@ def evaluate_population(pop):
     popcnt = len(pop)
     for popid, p in enumerate(pop):
         print(f"### EVAL candidate {popid}/{popcnt}")
-        cache_name = "cache_"+str(args.dataset)+"_e"+str(args.epochs) 
+        cache_name = "cache_"+str(args.dataset)+"_e"+str(args.epochs) +"_eps"+("_".join(map(str, args.eps)))
         try:
             cache = json.load(gzip.open(args.cache_dir + "/%s.json.gz" % cache_name, "rt"))
         except IOError:
             cache = {} 
 
         assert "gene" in p
+        geneid = genestr(p["gene"])
         #p["gene"]=[[0, 64, 3, 1, 3, 1, 64, 128, 1], [2, 64, 32, 4, 3, 2, 32, 32, 4], [2, 32, 32, 4, 3, 2, 16, 32, 8], [2, 16, 32, 8, 3, 2, 8, 32, 8], [2, 8, 32, 8, 3, 2, 4, 32, 8], [2, 4, 32, 8, 4, 1, 1, 10, 16], [4], [2]]
-        if ("accuracy_drop" not in p) or ("gene" not in cache):
-            p["runid"], train_acc = wrap_train_test(p["gene"])
-            p["accuracy_drop"] = 1 - train_acc
+ 
+        if ("accuracy_drop" not in p) and (geneid not in cache):
+            p["runid"], train_acc, att_acc = wrap_train_test(p["gene"])
             from_cache = False
             # note: we are minimizing all parameters! therefore accuracy drop must be evaluated instead of the accuracy
         else:
-             train_acc=cache[genestr(p["gene"])] 
+             train_acc, att_acc =cache[genestr(p["gene"])] 
              from_cache = True
 
-        cache[genestr(p["gene"])] = train_acc
+
+        p["accuracy_drop"] = 1 - train_acc
+        for epsid, att_acc_item in enumerate(att_acc):
+            p[f"accuracy_attack_drop{epsid}"] = 1 - att_acc_item
+
+
+
+        cache[genestr(p["gene"])] = (train_acc, att_acc)
         print("\nTrain accuracy: "+ str(train_acc)+"\n\n")
         
         print("\nHW Estimator\n")
@@ -549,8 +562,8 @@ def evaluate_population(pop):
         if "memory" not in p:
             p["memory"] = estimator.get_memory()
         
-        for x in ["memory", "latency", "accuracy_drop", "energy"]:
-            if x in p:
+        for x in p:
+            if x != "gene":
                 print("OPT eval", x, "=", p[x])
 
         # save the previous version of the cache
@@ -560,7 +573,7 @@ def evaluate_population(pop):
             while(os.path.isfile(args.cache_dir + "/backup_%s_%03d.json.gz" % (cache_name, backupid))):
                 backupid += 1
             try:
-                shutil.copy(args.cache_dir + "/cache_"+str(args.dataset)+"_e"+str(args.epochs)+".json.gz", args.cache_dir + "/backup_%s_%03d.json.gz" % (cache_name, backupid))
+                shutil.copy(args.cache_dir + "/" + cache_name, args.cache_dir + "/backup_%s_%03d.json.gz" % (cache_name, backupid))
             except: 
                 pass 
             
@@ -576,89 +589,135 @@ def evaluate_population(pop):
 def genestr(gene):
     return str(gene).replace(" ", "")
 
-def wrap_train_test(gene):
+def wrap_train_test(gene, train_function = None):
+    """Takes a gene and run training, validation and runs PGD attack
+
+    Args:
+        gene ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
     global x_train, y_train, x_test, y_test
     global x_train_shapes, x_test_shapes
-    runid = "N/A"
-    print(gene)
+    global config
 
-    with open("tested.log", "a") as f:
-        f.write(genestr(gene))
-        f.write("\n")
-    
-    print("\nWrapping...\n")
-    strategy = tf.distribute.MirroredStrategy()
-    print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+    if not train_function:
+        train_function = train
+
+    def invalid_ret(runid):
+        return runid, 0, [0 for _ in range(len(args.eps))]
+
+    with tf.Session(config=config) as sess:
+        set_session(sess)  # set this TensorFlow session as the default session for Keras
+        runid = "N/A"
+        print(gene)
+
+        with open("tested.log", "a") as f:
+            f.write(genestr(gene))
+            f.write("\n")
+        
+        print("\nWrapping...\n")
+        strategy = tf.distribute.MirroredStrategy()
+        print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+            
         
 
-    # reshaping of the training data
-    if gene[-1][0]==2: # reshaping is enabled
-        desired_size = gene[0][1]
-        if desired_size not in x_train_shapes:
-            x_train_shapes[desired_size] = resize(x_train, desired_size)
-        if desired_size not in x_test_shapes:
-            x_test_shapes[desired_size] = resize(x_test, desired_size)
+        # reshaping of the training data
+        if gene[-1][0]==2: # reshaping is enabled
+            desired_size = gene[0][1]
+            if desired_size not in x_train_shapes:
+                x_train_shapes[desired_size] = resize(x_train, desired_size)
+            if desired_size not in x_test_shapes:
+                x_test_shapes[desired_size] = resize(x_test, desired_size)
+            
+            x_train_current = x_train_shapes[desired_size]
+            x_test_current = x_test_shapes[desired_size]
+        elif gene[-1][0]==1: # no reshaping
+            x_train_current = x_train
+            x_test_current = x_test
+        else:
+            print("#### INVALID GENE - last value is not 1 nor 2", gene[-1][0])
+            return invalid_ret(runid)
+
+
+
+        # define model
+        try:
+            print("x_train shape: "+ str(x_train_current.shape[1:]))
+            model, eval_model, manipulate_model, attack_model = CapsNet(gene = gene, input_shape=x_train_current.shape[1:],
+                                                    n_class=len(np.unique(np.argmax(y_train, 1))),
+                                                    routings=args.routings)
+        except ValueError as e: # some bug in the chromosome ....
+            print("#### VALUE error desc ", e)
+            clear_session()
+            return invalid_ret(runid)
+        except tf.errors.ResourceExhaustedError as e: # some bug in the chromosome ....
+            print("#### Out of resources error desc ", e)
+            print("#### Out of resources error gene ", gene)
+            clear_session()
+            return invalid_ret(runid)
+
+
+        model.summary()
+
+
+        trainable_count = count_params(model.trainable_weights)
+        if args.max_params > 0 and trainable_count > args.max_params:
+            print(f"## ERR: number of trainable params {trainable_count} exceeded limit {args.max_params}")
+            clear_session()
+            return invalid_ret(runid)
+
+        # train or test
+        #if args.weights is not None:  # init the model weights with provided one
+        #    model.load_weights(args.weights)
+        if not args.testing:
+            # if gene[len(gene)-1][0]==2:
+            #     x_train = resize(x_train, gene[0][1]) #64
+            #     x_test = resize(x_test, gene[0][1])
+            #     train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
+            # elif gene[len(gene)-1][0]==1:
+            print("Train shapes:", x_train.shape, y_train.shape)
+            runid, _ = train_function(model=model, data=((x_train_current, y_train), (x_test_current, y_test)), args=args)
+            # save the chromosome
+            print("saving chromosome to ", args.save_dir + '/' + runid + '.chr')
+            json.dump(gene, open(args.save_dir + '/' + runid + '.chr', "w"))
+        else:  # as long as weights are given, will run testing
+            if args.weights is None:
+                print('No weights are provided. Will test using random initialized weights.')
+        test_acc = test(model=eval_model, data=(x_test_current, y_test), args=args)
+        print("Test accuracy", test_acc)
+
+        print("LINF - shapes", x_test_current.shape, y_test.shape)
         
-        x_train_current = x_train_shapes[desired_size]
-        x_test_current = x_test_shapes[desired_size]
-    elif gene[-1][0]==1: # no reshaping
-        x_train_current = x_train
-        x_test_current = x_test
-    else:
-        print("#### INVALID GENE - last value is not 1 nor 2", gene[-1][0])
-        return runid, 0
 
+        # compile the model
+        attack_model.compile(optimizer=optimizers.Adam(lr=args.lr),
+                    loss=margin_loss,
+                    metrics={'capsnet': 'accuracy'})
 
-    # define model
-    try:
-        print("x_train shape: "+ str(x_train_current.shape[1:]))
-        model, eval_model, manipulate_model = CapsNet(gene = gene, input_shape=x_train_current.shape[1:],
-                                                  n_class=len(np.unique(np.argmax(y_train, 1))),
-                                                  routings=args.routings)
-    except ValueError as e: # some bug in the chromosome ....
-        print("#### VALUE error desc ", e)
-        print("#### VALUE error gene ", gene)
-        tf.keras.backend.clear_session()
-        K.clear_session()
-        return runid, 0
-    except tf.errors.ResourceExhaustedError as e: # some bug in the chromosome ....
-        print("#### Out of resources error desc ", e)
-        print("#### Out of resources error gene ", gene)
-        tf.keras.backend.clear_session()
-        K.clear_session()
-        return runid, 0
+        if not args.eps:
+            epsilons = np.geomspace(1e-6, 0.5, 20)
+            #np.geomspace(100, 5000, 10) / 10000.
+        else:
+            epsilons = args.eps
 
+        print("epsilons: ", epsilons)
+        try:
+            _, attack_acs, _ = PGD_linf(attack_model, x_test_current, 
+                y_test, epsilons, 
+                sess=sess, args=args, cache_file=f"{args.cache_dir}/pgd-{args.dataset}-{{size}}-{{eps}}.npz")
+        except Exception as e:
+            print("#### attack error", e)
+            attack_acs = invalid_ret(runid)[-1]
 
-    model.summary()
+        clear_session()
+        return runid, test_acc, list(attack_acs)
 
-
-    trainable_count = count_params(model.trainable_weights)
-    if args.max_params > 0 and trainable_count > args.max_params:
-        print(f"## ERR: number of trainable params {trainable_count} exceeded limit {args.max_params}")
-        tf.keras.backend.clear_session()
-        K.clear_session()
-        return runid, 0
-
-    # train or test
-    if args.weights is not None:  # init the model weights with provided one
-        model.load_weights(args.weights)
-    if not args.testing:
-        # if gene[len(gene)-1][0]==2:
-        #     x_train = resize(x_train, gene[0][1]) #64
-        #     x_test = resize(x_test, gene[0][1])
-        #     train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
-        # elif gene[len(gene)-1][0]==1:
-        print("Train shapes:", x_train.shape, y_train.shape)
-        runid, _ = train(model=model, data=((x_train_current, y_train), (x_test_current, y_test)), args=args)
-    else:  # as long as weights are given, will run testing
-        if args.weights is None:
-            print('No weights are provided. Will test using random initialized weights.')
-    test_acc = test(model=eval_model, data=(x_test_current, y_test), args=args)
-   
-    tf.keras.backend.clear_session()
-    K.clear_session()
-    return runid, test_acc
-
+def clear_session():
+    pass
+    #tf.keras.backend.clear_session()
+    #K.clear_session()
 
 
     
@@ -674,8 +733,12 @@ def crowding_distance(par, objs):
         distance[sval[0][0]] = float("inf")
         distance[sval[-1][0]] = float("inf") 
 
+        diff = maxval - minval
+        if diff == 0:
+            diff = 1
+
         for i in range(1, len(sval) - 1):
-            distance[sval[i][0]] += abs(sval[i - 1][1][o] - sval[i + 1][1][o]) / (maxval - minval)
+            distance[sval[i][0]] += abs(sval[i - 1][1][o] - sval[i + 1][1][o]) / (diff)
    
     return zip(par, distance)
 
@@ -869,11 +932,23 @@ def train(model, data, args):
                   loss_weights=[1., args.lam_recon],
                   metrics={'capsnet': 'accuracy'})
 
+
     """
     # Training without data augmentation:
     model.fit([x_train, y_train], [y_train, x_train], batch_size=args.batch_size, epochs=args.epochs,
               validation_data=[[x_test, y_test], [y_test, x_test]], callbacks=[log, tb, checkpoint, lr_decay])
     """
+    if args.weights:
+        try:
+            model.load_weights(args.weights)
+
+            if not args.epochs:
+                return runid, model
+        except Exception as e:
+            if not args.epochs:
+                raise e
+            
+            print("#### unable to load weights", e)
 
     # Begin: Training with data augmentation ---------------------------------------------------------------------#
     def train_generator(x, y, batch_size, shift_fraction=0.):
@@ -1000,6 +1075,7 @@ if __name__ == "__main__":
     parser.add_argument('--output', default="results", type=str)
     parser.add_argument('--timeout', default=0, type=int, help="Maximal time in seconds for the training, zero = not set")
     parser.add_argument('--gpus', default=1, type=int)
+    parser.add_argument('--eps', type=float, nargs="+")
 
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--max_params', default=20000000, type=int)
@@ -1060,8 +1136,13 @@ if __name__ == "__main__":
     x_test_shapes = {}
 
 
+    metrics = ["accuracy_drop", "energy", "memory", "latency"]
 
-    rets = run_NSGA2(metrics=["accuracy_drop", "energy", "memory", "latency"], inshape=inshape, p_size=args.population, q_size=args.offsprings, generations=args.generations)
+    if args.eps:
+        for i in range(len(args.eps)):
+            metrics.append(f"accuracy_attack_drop{i}")
+
+    rets = run_NSGA2(metrics=metrics, inshape=inshape, p_size=args.population, q_size=args.offsprings, generations=args.generations)
     outfile = f"{args.output}_results.json"
     json.dump(rets, open(outfile, "wt"), )
 

@@ -277,13 +277,14 @@ def CapsNet(gene, input_shape, n_class, routings):
     # Models for training and evaluation (prediction)
     train_model = models.Model([inputs, y], [out_caps, decoder(masked_by_y)])
     eval_model = models.Model(inputs, [out_caps, decoder(masked)])
+    attack_model = models.Model(inputs, [out_caps])
 
     # manipulate model
     noise = layers.Input(shape=(n_class, dim_capsule_out))
     noised_digitcaps = layers.Add()([digitcaps, noise])
     masked_noised_y = Mask()([noised_digitcaps, y])
     manipulate_model = models.Model([inputs, y, noise], decoder(masked_noised_y))
-    return train_model, eval_model, manipulate_model
+    return train_model, eval_model, manipulate_model, attack_model
 
 
 

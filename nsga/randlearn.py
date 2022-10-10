@@ -64,6 +64,7 @@ if __name__ == "__main__":
     parser.add_argument('--output', default="results", type=str)
     parser.add_argument('--timeout', default=0, type=int, help="Maximal time in seconds for the training, zero = not set")
     parser.add_argument('--gpus', default=1, type=int)
+    parser.add_argument('--eps', default=np.nan, type=float)
 
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--lr', default=0.001, type=float,
